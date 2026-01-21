@@ -1,6 +1,6 @@
 # --- Execution Parameters ---
-export OMP_NUM_THREADS=32
-MPI_PROCS=4
+export OMP_NUM_THREADS=4
+MPI_PROCS=3
 
 # --- MPI Run Flags ---
 MPIRUN_FLAGS = -np $(MPI_PROCS) \
