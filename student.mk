@@ -3,7 +3,8 @@ export OMP_NUM_THREADS=32
 MPI_PROCS=4
 
 # --- MPI Run Flags ---
-MPIRUN_FLAGS = --map-by ppr:1:node:PE=32 
+MPIRUN_FLAGS =  -np $(MPI_PROCS) \
+                --map-by ppr:1:node:PE=32 
 
 
 # --- Compiler Flags ---
