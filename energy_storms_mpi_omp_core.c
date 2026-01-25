@@ -3,32 +3,10 @@
 #include <math.h>
 #include "energy_storms.h"
 #include <mpi.h>
+#include <omp.h>
 
 /* THIS FUNCTION CAN BE MODIFIED */
 /* Function to update a single position of the layer */
-static void update( float *layer, int layer_size, int local_k, int k_start, int pos, float energy ) {
-    /* 1. Compute the absolute value of the distance between the
-        impact position and the k-th position of the layer */
-    int distance = pos - (k_start + local_k);
-    if ( distance < 0 ) distance = - distance;
-
-    /* 2. Impact cell has a distance value of 1 */
-    distance = distance + 1;
-
-    /* 3. Square root of the distance */
-    /* NOTE: Real world atenuation typically depends on the square of the distance.
-       We use here a tailored equation that affects a much wider range of cells */
-    float atenuacion = sqrtf( (float)distance );
-
-    /* 4. Compute attenuated energy */
-    float energy_k = energy / layer_size / atenuacion;
-
-    /* 5. Do not add if its absolute value is lower than the threshold */
-    if ( energy_k >= THRESHOLD / layer_size || energy_k <= -THRESHOLD / layer_size )
-        layer[local_k] = layer[local_k] + energy_k;
-}
-
-
 void core(int layer_size, int num_storms, Storm *storms, float *maximum, int *positions) {
     int i, j, k, rank, size;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
@@ -36,7 +14,7 @@ void core(int layer_size, int num_storms, Storm *storms, float *maximum, int *po
     int k_start = (rank * layer_size) / size;
     int k_end = ((rank + 1) * layer_size) / size;
     int local_size = k_end - k_start;
-
+    
     /* 3. Allocate memory for the layer and initialize to zero */
     float *layer = (float *)malloc( sizeof(float) * local_size );
     float *layer_copy = (float *)malloc( sizeof(float) * local_size ); 
@@ -44,9 +22,11 @@ void core(int layer_size, int num_storms, Storm *storms, float *maximum, int *po
         fprintf(stderr,"Error: Allocating the layer memory\n");
         exit( EXIT_FAILURE );
     }
-    for( k=0; k<local_size; k++ ) layer[k] = 0.0f;
-    for( k=0; k<local_size; k++ ) layer_copy[k] = 0.0f;
-
+    #pragma omp parallel for schedule(static) 
+    for( k=0; k<local_size; k++ ) {
+        layer[k] = 0.0f;
+        layer_copy[k] = 0.0f;
+    }
     int right, left = MPI_PROC_NULL;
     if (rank > 0) {
         left = rank - 1;
@@ -58,24 +38,27 @@ void core(int layer_size, int num_storms, Storm *storms, float *maximum, int *po
     } else {
         right = MPI_PROC_NULL;
     }
-
+    
     /* 4. Storms simulation */
     for( i=0; i<num_storms; i++) {
-        
         /* 4.1. Add impacts energies to layer cells */
         /* For each particle */
-        #pragma omp parallel for private(j) schedule(static)
-        for( k=0; k<local_size; k++ ) {
-            for( j=0; j<storms[i].size; j++ ) {
-            /* Get impact energy (expressed in thousandths) */
+        #pragma omp parallel for reduction(+:layer[:local_size]) private(k) schedule (guided)
+        for( j=0; j<storms[i].size; j++ ) {
             float energy = (float)storms[i].posval[j*2+1] * 1000;
-            /* Get impact position */
             int position = storms[i].posval[j*2]; 
-            /* Update the energy value for the cell */
-            update( layer, layer_size, k, k_start, position, energy );
+
+            /* For each cell */
+            for( k=0; k<local_size; k++ ) {
+                int distance = position - (k_start + k);
+                if ( distance < 0 ) distance = - distance;
+                distance = distance + 1;
+                float atenuacion = sqrtf( (float)distance );
+                float energy_k = energy / layer_size / atenuacion;
+                if ( energy_k >= THRESHOLD / layer_size || energy_k <= -THRESHOLD / layer_size )
+                    layer[k] += energy_k;
             }
         }
-
         /* 4.2. Energy relaxation between storms */
         /* 4.2.1. Copy values to the ancillary array */
         float *temp = layer_copy;
