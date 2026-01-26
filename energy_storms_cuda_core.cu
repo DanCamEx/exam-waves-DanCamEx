@@ -2,81 +2,124 @@
 #include <stdlib.h>
 #include <math.h>
 #include "energy_storms.h"
+#include <cuda.h>
+#include <cuda_runtime.h>
 
 /* THIS FUNCTION CAN BE MODIFIED */
 /* Function to update a single position of the layer */
-static void update( float *layer, int layer_size, int k, int pos, float energy ) {
-    /* 1. Compute the absolute value of the distance between the
-        impact position and the k-th position of the layer */
-    int distance = pos - k;
-    if ( distance < 0 ) distance = - distance;
 
-    /* 2. Impact cell has a distance value of 1 */
-    distance = distance + 1;
-
-    /* 3. Square root of the distance */
-    /* NOTE: Real world atenuation typically depends on the square of the distance.
-       We use here a tailored equation that affects a much wider range of cells */
-    float atenuacion = sqrtf( (float)distance );
-
-    /* 4. Compute attenuated energy */
-    float energy_k = energy / layer_size / atenuacion;
-
-    /* 5. Do not add if its absolute value is lower than the threshold */
-    if ( energy_k >= THRESHOLD / layer_size || energy_k <= -THRESHOLD / layer_size )
-        layer[k] = layer[k] + energy_k;
+__device__ static float atomicMax(float* address, float val) {
+    int* address_as_i = (int*) address;
+    int old = *address_as_i, assumed;
+    do {
+        assumed = old;
+        old = ::atomicCAS(address_as_i, assumed,
+            __float_as_int(::fmaxf(val, __int_as_float(assumed))));
+    } while (assumed != old);
+    return __int_as_float(old);
 }
 
+__global__ void add_impact(float *d_layer, float *d_layer_copy, Storm *d_storms, int layer_size, int threshold, int i) {
+    int k = blockIdx.x * blockDim.x + threadIdx.x;
+    if ( k < layer_size ) {
+        for (int j = 0; j < d_storms[i].size; j++ ) {
+            float energy = (float)d_storms[i].posval[j*2+1] * 1000;
+            int position = d_storms[i].posval[j*2];
+            int distance = abs(position - k) + 1;
+
+            float atenuacion = sqrtf((float)distance);
+            float energy_k = energy / layer_size / atenuacion; 
+            if ( energy_k >= threshold / layer_size || energy_k <= -threshold / layer_size ) {
+                d_layer[k] += energy_k;
+            }
+        }
+        d_layer_copy[k] = d_layer[k];
+    }
+}
+
+__global__ void update_layer(float *d_layer, float *d_layer_copy, int layer_size) {
+    int k = blockIdx.x * blockDim.x + threadIdx.x;
+    if ( k > 0 && k < layer_size - 1 ) {
+        d_layer[k] = ( d_layer_copy[k-1] + d_layer_copy[k] + d_layer_copy[k+1] ) / 3;
+    }
+}
+
+__global__ void find_max_val(float *d_layer, int layer_size, float *d_maximum, int i) {
+    int k = blockIdx.x * blockDim.x + threadIdx.x;
+    if ( k > 0 && k < layer_size - 1 ) {
+        if ( d_layer[k] > d_layer[k-1] && d_layer[k] > d_layer[k+1] ) {
+            if ( d_layer[k] > d_maximum[i] ) {
+                atomicMax(&d_maximum[i], d_layer[k]);
+            }
+        }
+    }
+}
+
+__global__ void find_max_pos(float *d_layer, int layer_size, int *d_positions, float max_found, int i) {
+    int k = blockIdx.x * blockDim.x + threadIdx.x;
+    if ( k > 0 && k < layer_size - 1 ) {
+        if ( d_layer[k] > d_layer[k-1] && d_layer[k] > d_layer[k+1] ) {
+            if ( d_layer[k] == max_found ) {
+                atomicExch(&d_positions[i], k);
+            }
+        }
+    }
+}
 
 void core(int layer_size, int num_storms, Storm *storms, float *maximum, int *positions) {
-    int i, j, k;
-    /* 3. Allocate memory for the layer and initialize to zero */
-    float *layer = (float *)malloc( sizeof(float) * layer_size );
-    float *layer_copy = (float *)malloc( sizeof(float) * layer_size );
-    if ( layer == NULL || layer_copy == NULL ) {
-        fprintf(stderr,"Error: Allocating the layer memory\n");
-        exit( EXIT_FAILURE );
-    }
-    for( k=0; k<layer_size; k++ ) layer[k] = 0.0f;
-    for( k=0; k<layer_size; k++ ) layer_copy[k] = 0.0f;
+    int threshold = THRESHOLD;
+
+    float *d_layer;
+    float *d_layer_copy;
+    cudaMalloc(&d_layer, sizeof(float) * layer_size);
+    cudaMalloc(&d_layer_copy, sizeof(float) * layer_size);
+    cudaMemset(d_layer, 0, sizeof(float) * layer_size);
+    cudaMemset(d_layer_copy, 0, sizeof(float) * layer_size);
     
-    /* 4. Storms simulation */
-    for( i=0; i<num_storms; i++) {
+    Storm *d_storms;
+    cudaMalloc(&d_storms, sizeof(Storm) * num_storms);
+    cudaMemcpy(d_storms, storms, sizeof(Storm) * num_storms, cudaMemcpyHostToDevice);
+    
+    
+    float *d_maximum;
+    cudaMalloc(&d_maximum, sizeof(float) * num_storms);
+    cudaMemcpy(d_maximum, maximum, sizeof(float) * num_storms, cudaMemcpyHostToDevice);
+    
+    int *d_positions;
+    cudaMalloc(&d_positions, sizeof(int) * num_storms);
+    cudaMemcpy(d_positions, positions, sizeof(int) * num_storms, cudaMemcpyHostToDevice);
+    
 
-        /* 4.1. Add impacts energies to layer cells */
-        /* For each particle */
-        for( j=0; j<storms[i].size; j++ ) {
-            /* Get impact energy (expressed in thousandths) */
-            float energy = (float)storms[i].posval[j*2+1] * 1000;
-            /* Get impact position */
-            int position = storms[i].posval[j*2];
-
-            /* For each cell in the layer */
-            for( k=0; k<layer_size; k++ ) {
-                /* Update the energy value for the cell */
-                update( layer, layer_size, k, position, energy );
-            }
-        }
-
-        /* 4.2. Energy relaxation between storms */
-        /* 4.2.1. Copy values to the ancillary array */
-        for( k=0; k<layer_size; k++ ) 
-            layer_copy[k] = layer[k];
-
-        /* 4.2.2. Update layer using the ancillary values.
-                  Skip updating the first and last positions */
-        for( k=1; k<layer_size-1; k++ )
-            layer[k] = ( layer_copy[k-1] + layer_copy[k] + layer_copy[k+1] ) / 3;
-
-        /* 4.3. Locate the maximum value in the layer, and its position */
-        for( k=1; k<layer_size-1; k++ ) {
-            /* Check it only if it is a local maximum */
-            if ( layer[k] > layer[k-1] && layer[k] > layer[k+1] ) {
-                if ( layer[k] > maximum[i] ) {
-                    maximum[i] = layer[k];
-                    positions[i] = k;
-                }
-            }
-        }
+    Storm *temp_storms = (Storm *)malloc(sizeof(Storm) * num_storms);
+    memcpy(temp_storms, storms, sizeof(Storm) * num_storms);
+    
+    for( int i=0; i<num_storms; i++) {
+        int *d_posval;
+        cudaMalloc(&d_posval, storms[i].size * 2 * sizeof(int));
+        cudaMemcpy(d_posval, storms[i].posval, storms[i].size * 2 * sizeof(int), cudaMemcpyHostToDevice);
+        temp_storms[i].posval = d_posval; 
     }
+    cudaMemcpy(d_storms, temp_storms, sizeof(Storm) * num_storms, cudaMemcpyHostToDevice);
+
+    for( int i=0; i<num_storms; i++) {
+
+        add_impact<<<(layer_size + 255) / 256, 256>>>(d_layer, d_layer_copy, d_storms, layer_size, threshold, i);
+        cudaDeviceSynchronize();
+        
+        update_layer<<<(layer_size + 255) / 256, 256>>>(d_layer, d_layer_copy, layer_size);
+        cudaDeviceSynchronize();
+        
+        find_max_val<<<(layer_size + 255) / 256, 256>>>(d_layer, layer_size, d_maximum, i);
+        cudaDeviceSynchronize();
+        
+        float max_found;
+        cudaMemcpy(&max_found, &d_maximum[i], sizeof(float), cudaMemcpyDeviceToHost);
+
+        find_max_pos<<<(layer_size + 255) / 256, 256>>>(d_layer, layer_size, d_positions, max_found, i);
+        cudaDeviceSynchronize();
+       
+    }
+
+    cudaMemcpy(maximum, d_maximum, sizeof(float) * num_storms, cudaMemcpyDeviceToHost);
+    cudaMemcpy(positions, d_positions, sizeof(int) * num_storms, cudaMemcpyDeviceToHost);
 }
