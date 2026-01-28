@@ -11,7 +11,6 @@ typedef struct {
 } local_max;
 
 /* THIS FUNCTION CAN BE MODIFIED */
-/* Function to update a single position of the layer */
 void core(int layer_size, int num_storms, Storm *storms, float *maximum, int *positions) {
     int rank, size;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
@@ -27,7 +26,8 @@ void core(int layer_size, int num_storms, Storm *storms, float *maximum, int *po
         fprintf(stderr,"Error: Allocating the layer memory\n");
         MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
     }
-    for (int k = 0; k < local_size + 2; k++) {
+    #pragma omp parallel for schedule(static)
+    for( int k=0; k<local_size+2; k++ ) {
         layer[k] = 0.0f;
         layer_copy[k] = 0.0f;
     }
@@ -35,12 +35,25 @@ void core(int layer_size, int num_storms, Storm *storms, float *maximum, int *po
     int right = (rank < size - 1) ? rank + 1 : MPI_PROC_NULL;
     int left  = (rank > 0) ? rank - 1 : MPI_PROC_NULL;
     MPI_Request req[4];
+    float threshold = THRESHOLD / (float)layer_size; 
 
     for( int i=0; i<num_storms; i++) {
 
         local_max local_values;
         local_values.val = 0.0f;
         local_values.pos = -1;
+        
+        int storm_len = storms[i].size;
+        float *storm_energies = (float*)malloc(storm_len * sizeof(float));
+        int *storm_positions  = (int*)malloc(storm_len * sizeof(int));
+        
+
+        for(int j=0; j<storm_len; j++) {
+            storm_positions[j] = storms[i].posval[j*2];
+            
+            float raw_energy = (float)storms[i].posval[j*2+1] * 1000.0f;
+            storm_energies[j] = raw_energy / layer_size;
+        }
 
         #pragma omp parallel
         {
@@ -48,23 +61,18 @@ void core(int layer_size, int num_storms, Storm *storms, float *maximum, int *po
             for( int k=first_k; k<final_k; k++ ) {
                 int local_k = k - first_k + 1;
 
-                for( int j=0; j<storms[i].size; j++ ) {
-                    float energy = (float)storms[i].posval[j*2+1] * 1000;
-                    int position = storms[i].posval[j*2];
-                    int distance = abs(position - k) + 1;
-
+                for( int j=0; j<storm_len; j++ ) {
+                    int distance = abs(storm_positions[j] - k) + 1;
                     float atenuacion = sqrtf((float)distance);
-                    float energy_k = energy / layer_size / atenuacion; 
+                    float energy_k = storm_energies[j] / atenuacion; 
 
-                    if ( energy_k >= THRESHOLD / layer_size || energy_k <= -THRESHOLD / layer_size ) {
+                    if ( energy_k >= threshold || energy_k <= -threshold ) {
                         layer[local_k] += energy_k;
                     }
                 }
-                
                 layer_copy[local_k] = layer[local_k];
             }
-        
-            
+
             #pragma omp master
             {
             MPI_Isend(&layer_copy[1], 1, MPI_FLOAT, left, 0, MPI_COMM_WORLD, &req[0]);
@@ -110,7 +118,7 @@ void core(int layer_size, int num_storms, Storm *storms, float *maximum, int *po
             float thread_val = 0.0f;
             int thread_pos = 0;
 
-            #pragma omp for
+            #pragma omp for schedule(static)
             for (int k=2; k<local_size; k++) {
                 int global_k = first_k + k - 1;
                 if (global_k > 0 && global_k < layer_size - 1) {
@@ -158,6 +166,9 @@ void core(int layer_size, int num_storms, Storm *storms, float *maximum, int *po
         MPI_Allreduce(&local_values, &final_values, 1, MPI_FLOAT_INT, MPI_MAXLOC, MPI_COMM_WORLD);
         maximum[i]   = final_values.val;
         positions[i] = final_values.pos;
+
+        free( storm_energies );
+        free( storm_positions );
     }
 
     free( layer );
