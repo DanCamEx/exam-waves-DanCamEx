@@ -47,7 +47,6 @@ void core(int layer_size, int num_storms, Storm *storms, float *maximum, int *po
         float *storm_energies = (float*)malloc(storm_len * sizeof(float));
         int *storm_positions  = (int*)malloc(storm_len * sizeof(int));
         
-
         for(int j=0; j<storm_len; j++) {
             storm_positions[j] = storms[i].posval[j*2];
             
@@ -56,7 +55,7 @@ void core(int layer_size, int num_storms, Storm *storms, float *maximum, int *po
         }
 
         #pragma omp parallel
-        {
+        {   
             #pragma omp for schedule(static)
             for( int k=first_k; k<final_k; k++ ) {
                 int local_k = k - first_k + 1;
@@ -106,20 +105,12 @@ void core(int layer_size, int num_storms, Storm *storms, float *maximum, int *po
                 else 
                     layer[k] = (layer_copy[k-1] + layer_copy[k] + layer_copy[k+1]) / 3.0f;
             }
-            
-            #pragma omp master
-            {
-            MPI_Isend(&layer[1], 1, MPI_FLOAT, left, 2, MPI_COMM_WORLD, &req[0]);
-            MPI_Isend(&layer[local_size], 1, MPI_FLOAT, right, 3, MPI_COMM_WORLD, &req[1]);
-            MPI_Irecv(&layer[0], 1, MPI_FLOAT, left, 3, MPI_COMM_WORLD, &req[2]);
-            MPI_Irecv(&layer[local_size+1], 1, MPI_FLOAT, right, 2, MPI_COMM_WORLD, &req[3]);
-            }
 
             float thread_val = 0.0f;
             int thread_pos = 0;
 
             #pragma omp for schedule(static)
-            for (int k=2; k<local_size; k++) {
+            for (int k=1; k<=local_size; k++) {
                 int global_k = first_k + k - 1;
                 if (global_k > 0 && global_k < layer_size - 1) {
                     if (layer[k] > layer[k-1] && layer[k] > layer[k+1]) {
@@ -136,28 +127,6 @@ void core(int layer_size, int num_storms, Storm *storms, float *maximum, int *po
                 if (thread_val > local_values.val) {
                     local_values.val = thread_val;
                     local_values.pos = thread_pos;
-                }
-            }
-            
-            #pragma omp barrier
-            #pragma omp master
-            MPI_Waitall(4, req, MPI_STATUSES_IGNORE);
-            
-            #pragma omp single
-            {
-                int left_k = first_k;
-                if (left_k > 0 && layer[1] > layer[0] && layer[1] > layer[2]) {
-                    if (layer[1] > local_values.val) { 
-                        local_values.val = layer[1]; 
-                        local_values.pos = left_k; 
-                    }
-                }
-                int right_k = first_k + local_size - 1;
-                if (right_k < layer_size - 1 && layer[local_size] > layer[local_size-1] && layer[local_size] > layer[local_size+1]) {
-                    if (layer[local_size] > local_values.val) { 
-                        local_values.val = layer[local_size]; 
-                        local_values.pos = right_k; 
-                    }
                 }
             }
         }
