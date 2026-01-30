@@ -5,9 +5,32 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 
-/* THIS FUNCTION CAN BE MODIFIED */
-/* Function to update a single position of the layer */
+#define BLOCK_SIZE 256
 
+/* Funzione per aggiornare una singola posizione del layer */
+__device__ static void update( float *layer, int layer_size, int k, int pos, float energy ) {
+	/* 1. Calcola il valore assoluto della distanza tra la
+		posizione di impatto e la k-esima posizione del layer */
+	int distance = pos - k;
+	if ( distance < 0 ) distance = - distance;
+
+	/* 2. La cella di impatto ha un valore di distanza pari a 1 */
+	distance = distance + 1;
+
+	/* 3. Radice quadrata della distanza */
+	/* NOTA: L'attenuazione nel mondo reale dipende tipicamente dal quadrato della distanza.
+	   Qui usiamo un'equazione personalizzata che influenza un intervallo molto più ampio di celle */
+	float atenuacion = sqrtf( (float)distance );
+
+	/* 4. Calcola l'energia attenuata */
+	float energy_k = energy / layer_size / atenuacion;
+
+	/* 5. Non aggiungere se il valore assoluto è inferiore alla soglia */
+	if ( energy_k >= THRESHOLD / layer_size || energy_k <= -THRESHOLD / layer_size )
+		layer[k] = layer[k] + energy_k;
+}
+
+/* Funzione atomica per calcolare il massimo tra due float */
 __device__ static float atomicMax(float* address, float val) {
     int* address_as_i = (int*) address;
     int old = *address_as_i, assumed;
@@ -19,24 +42,42 @@ __device__ static float atomicMax(float* address, float val) {
     return __int_as_float(old);
 }
 
+/* Kernel che divide le tempeste in blocchi e calcola l'impatto per ogni particella su ogni cella */
 __global__ void add_impact(float *d_layer, float *d_layer_copy, Storm *d_storms, int layer_size, int threshold, int i) {
+    __shared__ int s_posval[BLOCK_SIZE * 2];
     int k = blockIdx.x * blockDim.x + threadIdx.x;
-    if ( k < layer_size ) {
-        for (int j = 0; j < d_storms[i].size; j++ ) {
-            float energy = (float)d_storms[i].posval[j*2+1] * 1000;
-            int position = d_storms[i].posval[j*2];
-            int distance = abs(position - k) + 1;
+    
+    for (int t = 0; t < d_storms[i].size; t += BLOCK_SIZE) {
+        
+        int idx_in_block = threadIdx.x;
+        
+        while (idx_in_block < BLOCK_SIZE * 2) {
+            int global_idx = (t*2) + idx_in_block;
+            
+            if (global_idx < d_storms[i].size * 2) {
+                s_posval[idx_in_block] = d_storms[i].posval[global_idx];
+            }
+            idx_in_block += blockDim.x;
+        }
+        __syncthreads();
 
-            float atenuacion = sqrtf((float)distance);
-            float energy_k = energy / layer_size / atenuacion; 
-            if ( energy_k >= threshold / layer_size || energy_k <= -threshold / layer_size ) {
-                d_layer[k] += energy_k;
+        int particles_per_block = min(BLOCK_SIZE, d_storms[i].size - t);
+        for (int j = 0; j < particles_per_block; j++) {
+            float energy = (float)s_posval[j*2+1] * 1000;
+            int position = s_posval[j*2];
+            if ( k < layer_size ) {
+                update( d_layer, layer_size, k, position, energy);
             }
         }
+        __syncthreads();
+    }
+    
+    if (k < layer_size) {
         d_layer_copy[k] = d_layer[k];
     }
 }
 
+/* Kernel per aggiornare i l'energia delle celle facendone la media con i vicini adiacenti */
 __global__ void update_layer(float *d_layer, float *d_layer_copy, int layer_size) {
     int k = blockIdx.x * blockDim.x + threadIdx.x;
     if ( k > 0 && k < layer_size - 1 ) {
@@ -44,6 +85,7 @@ __global__ void update_layer(float *d_layer, float *d_layer_copy, int layer_size
     }
 }
 
+/* Kernel per trovare il massimo valore nel layer */
 __global__ void find_max_val(float *d_layer, int layer_size, float *d_maximum, int i) {
     int k = blockIdx.x * blockDim.x + threadIdx.x;
     if ( k > 0 && k < layer_size - 1 ) {
@@ -55,6 +97,7 @@ __global__ void find_max_val(float *d_layer, int layer_size, float *d_maximum, i
     }
 }
 
+/* Kernel per trovare la posizione del massimo valore */
 __global__ void find_max_pos(float *d_layer, int layer_size, int *d_positions, float max_found, int i) {
     int k = blockIdx.x * blockDim.x + threadIdx.x;
     if ( k > 0 && k < layer_size - 1 ) {
@@ -103,19 +146,19 @@ void core(int layer_size, int num_storms, Storm *storms, float *maximum, int *po
 
     for( int i=0; i<num_storms; i++) {
 
-        add_impact<<<(layer_size + 255) / 256, 256>>>(d_layer, d_layer_copy, d_storms, layer_size, threshold, i);
+        add_impact<<<(layer_size + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>(d_layer, d_layer_copy, d_storms, layer_size, threshold, i);
         cudaDeviceSynchronize();
         
-        update_layer<<<(layer_size + 255) / 256, 256>>>(d_layer, d_layer_copy, layer_size);
+        update_layer<<<(layer_size + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>(d_layer, d_layer_copy, layer_size);
         cudaDeviceSynchronize();
         
-        find_max_val<<<(layer_size + 255) / 256, 256>>>(d_layer, layer_size, d_maximum, i);
+        find_max_val<<<(layer_size + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>(d_layer, layer_size, d_maximum, i);
         cudaDeviceSynchronize();
         
         float max_found;
         cudaMemcpy(&max_found, &d_maximum[i], sizeof(float), cudaMemcpyDeviceToHost);
 
-        find_max_pos<<<(layer_size + 255) / 256, 256>>>(d_layer, layer_size, d_positions, max_found, i);
+        find_max_pos<<<(layer_size + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>(d_layer, layer_size, d_positions, max_found, i);
         cudaDeviceSynchronize();
        
     }
