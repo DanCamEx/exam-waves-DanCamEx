@@ -24,11 +24,11 @@ CUDACC=nvcc -arch=sm_75
 OMPFLAG=-fopenmp
 
 # Flags for optimization and libs
-FLAGS=-O3
+FLAGS= -O3 -march=native -fno-math-errno -fno-trapping-math -fno-signaling-nans -funroll-loops
 LIBS=-lm
 
 # Targets to build
-OBJS=energy_storms_seq energy_storms_mpi_omp energy_storms_cuda energy_storms_core.o energy_storms_mpi_omp_core.o energy_storms_cuda_core.o
+OBJS=energy_storms_optimized energy_storms_seq energy_storms_mpi_omp energy_storms_cuda energy_storms_core.o energy_storms_core_optimized.o energy_storms_mpi_omp_core.o energy_storms_cuda_core.o
 
 all: $(OBJS)
 
@@ -48,22 +48,28 @@ help:
 		@echo "make energy_storms_cuda		  Build only the CUDA version"
 
 energy_storms_core.o: energy_storms_core.c energy_storms.h
-		$(CC) $(DEBUG) -c $< $(LIBS) -o $@
+		$(CC) $(FLAGS) $(DEBUG) -c $< $(LIBS) -o $@
 
-energy_storms_seq: energy_storms_seq.c energy_storms.h energy_storms_core.o
-		$(CC) $(DEBUG) $< energy_storms_core.o $(LIBS) -o $@
+energy_storms_core_optimized.o: energy_storms_core_optimized.c energy_storms.h
+		$(CC) $(FLAGS) $(DEBUG) -c $< $(LIBS) -o $@
+
+energy_storms_seq: energy_storms_seq.c energy_storms.h energy_storms_core.o 
+		$(CC) $(FLAGS) $(DEBUG) $< energy_storms_core.o $(LIBS) -o $@
+
+energy_storms_optimized: energy_storms_optimized.c energy_storms.h energy_storms_core_optimized.o 
+		$(CC) $(FLAGS) $(DEBUG) $< energy_storms_core_optimized.o $(LIBS) -o $@
 
 energy_storms_mpi_omp_core.o: energy_storms_mpi_omp_core.c energy_storms.h
-		$(MPICC) $(DEBUG) $(OMPFLAG) $(MPI_OMP_EXTRA_CFLAGS) -c $< $(LIBS) $(MPI_OMP_EXTRA_LIBS) -o $@
-
+		$(MPICC) $(FLAGS) $(DEBUG) $(OMPFLAG) $(MPI_OMP_EXTRA_CFLAGS) -c $< $(LIBS) $(MPI_OMP_EXTRA_LIBS) -o $@
+	
 energy_storms_mpi_omp: energy_storms_mpi_omp.c energy_storms.h energy_storms_mpi_omp_core.o
-		$(MPICC) $(DEBUG) $(OMPFLAG) $(MPI_OMP_EXTRA_CFLAGS) $< energy_storms_mpi_omp_core.o $(LIBS) $(MPI_OMP_EXTRA_LIBS) -o $@
+		$(MPICC) $(FLAGS) $(DEBUG) $(OMPFLAG) $(MPI_OMP_EXTRA_CFLAGS) $< energy_storms_mpi_omp_core.o $(LIBS) $(MPI_OMP_EXTRA_LIBS) -o $@
 	
 energy_storms_cuda_core.o: energy_storms_cuda_core.cu energy_storms.h
-		$(CUDACC) $(DEBUG) $(CUDA_EXTRA_CFLAGS) -c $< $(LIBS) $(CUDA_EXTRA_LIBS) -o $@
+		$(CUDACC) $(FLAGS) $(DEBUG) $(CUDA_EXTRA_CFLAGS) -c $< $(LIBS) $(CUDA_EXTRA_LIBS) -o $@
 
 energy_storms_cuda: energy_storms_cuda.cpp energy_storms.h energy_storms_cuda_core.o
-		$(CUDACC) $(DEBUG) $(CUDA_EXTRA_CFLAGS) $< energy_storms_cuda_core.o $(LIBS) $(CUDA_EXTRA_LIBS) -o $@
+		$(CUDACC) $(FLAGS) $(DEBUG) $(CUDA_EXTRA_CFLAGS) $< energy_storms_cuda_core.o $(LIBS) $(CUDA_EXTRA_LIBS) -o $@
 
 # Remove the target files
 clean:
