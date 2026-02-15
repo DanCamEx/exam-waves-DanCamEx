@@ -1,0 +1,172 @@
+Building MPI+OpenMP binary...
+make: 'energy_storms_mpi_omp' is up to date.
+Starting MPI+OpenMP tests...
+[MPI+OpenMP] file=test_files/test_02_a30k_p20k_w1 size=30000
+[MPI+OpenMP] run=1
+
+Time: 0.148154
+Result: 17197 1103.167480
+[MPI+OpenMP] run=2
+
+Time: 0.137444
+Result: 17197 1103.167480
+[MPI+OpenMP] run=3
+
+Time: 0.142627
+Result: 17197 1103.167480
+[MPI+OpenMP] run=4
+
+Time: 0.097654
+Result: 17197 1103.167480
+[MPI+OpenMP] run=5
+
+Time: 0.099193
+Result: 17197 1103.167480
+[MPI+OpenMP] run=6
+
+Time: 0.088732
+Result: 17197 1103.167480
+[MPI+OpenMP] run=7
+
+Time: 0.075393
+Result: 17197 1103.167480
+[MPI+OpenMP] run=8
+
+Time: 0.076783
+Result: 17197 1103.167480
+[MPI+OpenMP] run=9
+
+Time: 0.210629
+Result: 17197 1103.167480
+[MPI+OpenMP] run=10
+
+Time: 0.073897
+Result: 17197 1103.167480
+[MPI+OpenMP] average_time=0.1150506000
+[MPI+OpenMP] file=test_files/test_07_a1M_p5k_w1 size=1000000
+[MPI+OpenMP] run=1
+
+Time: 0.245701
+Result: 507805 12177.071289
+[MPI+OpenMP] run=2
+
+Time: 0.245707
+Result: 507805 12177.071289
+[MPI+OpenMP] run=3
+
+Time: 0.244134
+Result: 507805 12177.071289
+[MPI+OpenMP] run=4
+
+Time: 0.247897
+Result: 507805 12177.071289
+[MPI+OpenMP] run=5
+
+Time: 0.244686
+Result: 507805 12177.071289
+[MPI+OpenMP] run=6
+
+Time: 0.245609
+Result: 507805 12177.071289
+[MPI+OpenMP] run=7
+
+Time: 0.246555
+Result: 507805 12177.071289
+[MPI+OpenMP] run=8
+
+Time: 0.321982
+Result: 507805 12177.071289
+[MPI+OpenMP] run=9
+
+Time: 0.250278
+Result: 507805 12177.071289
+[MPI+OpenMP] run=10
+
+Time: 0.244648
+Result: 507805 12177.071289
+[MPI+OpenMP] average_time=0.2537197000
+[MPI+OpenMP] file=test_files/test_08_a100M_p1_w1 size=100000000
+[MPI+OpenMP] run=1
+
+Time: 0.085674
+Result: 10 0.000080
+[MPI+OpenMP] run=2
+
+Time: 0.088056
+Result: 10 0.000080
+[MPI+OpenMP] run=3
+
+Time: 0.087340
+Result: 10 0.000080
+[MPI+OpenMP] run=4
+
+Time: 0.086791
+Result: 10 0.000080
+[MPI+OpenMP] run=5
+
+Time: 0.086106
+Result: 10 0.000080
+[MPI+OpenMP] run=6
+
+Time: 0.084761
+Result: 10 0.000080
+[MPI+OpenMP] run=7
+
+Time: 0.086565
+Result: 10 0.000080
+[MPI+OpenMP] run=8
+
+Time: 0.085666
+Result: 10 0.000080
+[MPI+OpenMP] run=9
+
+Time: 0.085323
+Result: 10 0.000080
+[MPI+OpenMP] run=10
+
+Time: 0.086647
+Result: 10 0.000080
+[MPI+OpenMP] average_time=0.0862929000
+[MPI+OpenMP] file=test_files/test_01_a35_p5_w3 size=35
+[MPI+OpenMP] run=1
+
+Time: 0.012188
+Result: 10 3639.926758
+[MPI+OpenMP] run=2
+
+Time: 0.013369
+Result: 10 3639.926758
+[MPI+OpenMP] run=3
+
+Time: 0.012345
+Result: 10 3639.926758
+[MPI+OpenMP] run=4
+
+Time: 0.012242
+Result: 10 3639.926758
+[MPI+OpenMP] run=5
+
+Time: 0.012314
+Result: 10 3639.926758
+[MPI+OpenMP] run=6
+
+Time: 0.011968
+Result: 10 3639.926758
+[MPI+OpenMP] run=7
+
+Time: 0.012474
+Result: 10 3639.926758
+[MPI+OpenMP] run=8
+
+Time: 0.012047
+Result: 10 3639.926758
+[MPI+OpenMP] run=9
+
+Time: 0.011442
+Result: 10 3639.926758
+[MPI+OpenMP] run=10
+
+Time: 0.012813
+Result: 10 3639.926758
+[MPI+OpenMP] average_time=0.0123202000
+All MPI+OpenMP tests completed.
