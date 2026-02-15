@@ -5,31 +5,9 @@
 #include <omp.h>
 #include "energy_storms.h"
 
-/* Funzione per aggiornare una singola posizione del layer */
-static void update( float *layer, int layer_size, int k, int pos, float energy ) {
-	/* 1. Calcola il valore assoluto della distanza tra la
-		posizione di impatto e la k-esima posizione del layer */
-	int distance = pos - k;
-	if ( distance < 0 ) distance = - distance;
-
-	/* 2. La cella di impatto ha un valore di distanza pari a 1 */
-	distance = distance + 1;
-
-	/* 3. Radice quadrata della distanza */
-	/* NOTA: L'attenuazione nel mondo reale dipende tipicamente dal quadrato della distanza.
-	   Qui usiamo un'equazione personalizzata che influenza un intervallo molto più ampio di celle */
-	float atenuacion = sqrtf( (float)distance );
-
-	/* 4. Calcola l'energia attenuata */
-	float energy_k = energy / layer_size / atenuacion;
-
-	/* 5. Non aggiungere se il valore assoluto è inferiore alla soglia */
-	if ( energy_k >= THRESHOLD / layer_size || energy_k <= -THRESHOLD / layer_size )
-		layer[k] = layer[k] + energy_k;
-}
-
 void core(int layer_size, int num_storms, Storm *storms, float *maximum, int *positions) {
 	int i, j, k, rank, size;
+	float threshold = THRESHOLD / layer_size;
 	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 	MPI_Comm_size(MPI_COMM_WORLD, &size);
 
@@ -78,15 +56,33 @@ void core(int layer_size, int num_storms, Storm *storms, float *maximum, int *po
 				/* Ottieni l'energia di impatto */
 				float energy = (float)storms[i].posval[j*2+1] * 1000;
 				/* Ottieni la posizione di impatto */
-				int position = storms[i].posval[j*2];
-				/* Calcola la posizione locale  */
-				int local_position = position - first_k + 1;
+				int position = storms[i].posval[j*2] - first_k + 1;
+
+				float x = energy / layer_size;
 
 				/* Per ogni cella nel layer */
 				#pragma omp for schedule(static) nowait
 				for( k=1; k<=local_size; k++ ) {
 					/* Aggiorna l'energia */
-					update( layer, layer_size, k, local_position, energy );
+					/* 1. Calcola il valore assoluto della distanza tra la
+					posizione di impatto e la k-esima posizione del layer */
+					int distance = position - k;
+					if ( distance < 0 ) distance = - distance;
+
+					/* 2. La cella di impatto ha un valore di distanza pari a 1 */
+					distance = distance + 1;
+
+					/* 3. Radice quadrata della distanza */
+					/* NOTA: L'attenuazione nel mondo reale dipende tipicamente dal quadrato della distanza.
+						Qui usiamo un'equazione personalizzata che influenza un intervallo molto più ampio di celle */
+					float atenuacion = sqrtf( (float)distance );
+
+					/* 4. Calcola l'energia attenuata */
+					float energy_k = x / atenuacion;
+
+					/* 5. Non aggiungere se il valore assoluto è inferiore alla soglia */
+					if ( fabs(energy_k) >= threshold ) 
+						layer[k] = layer[k] + energy_k;
 				}
 			}
 		}
