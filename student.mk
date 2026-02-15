@@ -4,7 +4,7 @@ MPI_PROCS=4
 
 # --- MPI Run Flags ---
 MPIRUN_FLAGS =  -np $(MPI_PROCS) \
-                -bind-to core \
+                --bind-to core \
                 --map-by node:PE=32
 
 
@@ -12,7 +12,7 @@ MPIRUN_FLAGS =  -np $(MPI_PROCS) \
 # --- Compiler Flags ---
 # Flags for MPI+OpenMP code
 # Uncomment and add extra flags if you need them
-MPI_OMP_EXTRA_CFLAGS = -O3 -march=native -fno-math-errno -fno-trapping-math -fno-signaling-nans -funroll-loops --fast-math
+MPI_OMP_EXTRA_CFLAGS = -O3 -march=native -fno-math-errno -fno-trapping-math -fno-signaling-nans -funroll-loops
 #MPI_OMP_EXTRA_LIBS =
 
 # Flags for CUDA code

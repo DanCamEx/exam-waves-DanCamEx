@@ -47,45 +47,44 @@ void core(int layer_size, int num_storms, Storm *storms, float *maximum, int *po
 
 	/* 4. Inizio della simulazione delle tempeste */
 	for( i=0; i<num_storms; i++ ) {
+		/* Allochiamo lo spazio per calcolare le energie e le posizioni dei vari impatti*/
+        float *energies = (float*)malloc(sizeof(float) * storms[i].size);
+        int *impact_positions = (int*)malloc(sizeof(int) * storms[i].size);
+
+		/* Calcoliamo una sola volta le energie e le posizioni degli impatti */
+        for(j=0; j<storms[i].size; j++){
+            float energy = (float)storms[i].posval[j*2+1] * 1000.0f;
+            energies[j] = energy / layer_size;
+            impact_positions[j] = storms[i].posval[j*2] - first_k + 1;
+        }
 
 		/* 4.1. Aggiungi le energie degli impatti alle celle del layer */
-		#pragma omp parallel private(j, k)
-		{
-			/* Per ogni particella */
+		/* Per ogni particella */
+		#pragma omp parallel for private(j) schedule(static)
+		for( k=1; k<=local_size; k++ ) {
+			/* Inizializziamo l'energia locale della cella */
+			float local_energy = layer[k];
+
+			/* Per ogni cella nel layer */
 			for( j=0; j<storms[i].size; j++ ) {
-				/* Ottieni l'energia di impatto */
-				float energy = (float)storms[i].posval[j*2+1] * 1000;
-				/* Ottieni la posizione di impatto */
-				int position = storms[i].posval[j*2] - first_k + 1;
 
-				float x = energy / layer_size;
+				 /* 1. Calcola la distanza (intero) */
+                int distance = abs(impact_positions[j] - k) + 1;
 
-				/* Per ogni cella nel layer */
-				#pragma omp for schedule(static) nowait
-				for( k=1; k<=local_size; k++ ) {
-					/* Aggiorna l'energia */
-					/* 1. Calcola il valore assoluto della distanza tra la
-					posizione di impatto e la k-esima posizione del layer */
-					int distance = position - k;
-					if ( distance < 0 ) distance = - distance;
+                /* 3. Calcolo effettivo solo se necessario */
+                float atenuacion = sqrtf( (float)distance );
+                float energy_k = energies[j] / atenuacion;
 
-					/* 2. La cella di impatto ha un valore di distanza pari a 1 */
-					distance = distance + 1;
-
-					/* 3. Radice quadrata della distanza */
-					/* NOTA: L'attenuazione nel mondo reale dipende tipicamente dal quadrato della distanza.
-						Qui usiamo un'equazione personalizzata che influenza un intervallo molto più ampio di celle */
-					float atenuacion = sqrtf( (float)distance );
-
-					/* 4. Calcola l'energia attenuata */
-					float energy_k = x / atenuacion;
-
-					/* 5. Non aggiungere se il valore assoluto è inferiore alla soglia */
-					if ( fabs(energy_k) >= threshold ) 
-						layer[k] = layer[k] + energy_k;
-				}
+				/* 5. Non aggiungere se il valore assoluto è inferiore alla soglia */
+				if ( fabs(energy_k) >= threshold ) 
+					local_energy += energy_k;
 			}
+			/* Solo alla fine scriviamo sull'array l'energia totale accumulata nella cella k */
+			layer[k] = local_energy;
 		}
+		free(energies);
+        free(impact_positions);
+		
 
 		/* 4.2. Rilassamento dell'energia tra le tempeste */
 		/* 4.2.1. Copia i valori nell'array copia */
@@ -93,15 +92,14 @@ void core(int layer_size, int num_storms, Storm *storms, float *maximum, int *po
 		for( k=1; k<=local_size; k++ ) 
 			layer_copy[k] = layer[k];
 
-		/* 4.2.2 Inizia lo scambio dei valori. I processi MPI inviano i propri bordi ai vicini
-				per permettere il calcolo del rilassamento ai bordi (che non sono quelli globali) */
-		/* Invia la prima cella e riceve l'ultima */
+		/* Scambio verso SINISTRA: Tutti inviano al vicino di sinistra e ricevono dal vicino di destra contemporaneamente */
 		MPI_Sendrecv(&layer_copy[1], 1, MPI_FLOAT, left_rank, 1,
-					&layer_copy[0], 1, MPI_FLOAT, left_rank, 1,
-					MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-		/* Invia l'ultima cella e riceve la prima */
-		MPI_Sendrecv(&layer_copy[local_size], 1, MPI_FLOAT, right_rank, 1,
 					&layer_copy[local_size+1], 1, MPI_FLOAT, right_rank, 1,
+					MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+		/* Scambio verso DESTRA: Tutti inviano al vicino di destra e ricevono dal vicino di sinistra contemporaneamente */
+		MPI_Sendrecv(&layer_copy[local_size], 1, MPI_FLOAT, right_rank, 2,
+					&layer_copy[0], 1, MPI_FLOAT, left_rank, 2,
 					MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
 		/* 4.2.3. Aggiorna il layer usando i valori della copia. Vengono aggiornati i valori ai bordi
@@ -110,16 +108,6 @@ void core(int layer_size, int num_storms, Storm *storms, float *maximum, int *po
 		for( k=1; k<=local_size; k++ ) {
 			layer[k] = ( layer_copy[k-1] + layer_copy[k] + layer_copy[k+1] ) / 3;
 		}
-
-		/* 4.2.4 Riavviene lo scambio dei valori aggiornati per il calcolo del massimo */
-		/* Invia la prima cella e riceve l'ultima */
-		MPI_Sendrecv(&layer[1], 1, MPI_FLOAT, left_rank, 2,
-					&layer[0], 1, MPI_FLOAT, left_rank, 2,
-					MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-		/* Invia l'ultima cella e riceve la prima */
-		MPI_Sendrecv(&layer[local_size], 1, MPI_FLOAT, right_rank, 2,
-					&layer[local_size+1], 1, MPI_FLOAT, right_rank, 2,
-					MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
 		/* 4.3. Trova il valore massimo nel layer */
 		/* Crea una struct per avere il tipo di dato corretto nella MPI_Allreduce */
