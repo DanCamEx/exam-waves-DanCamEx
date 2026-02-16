@@ -5,4 +5,5 @@ energy_storms_cuda
 energy_storms_seq
 energy_storms_optimized
 /scorep*
-/report*
+/report_*
+/results*
