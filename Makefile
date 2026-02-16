@@ -66,10 +66,10 @@ energy_storms_mpi_omp: energy_storms_mpi_omp.c energy_storms.h energy_storms_mpi
 		$(MPICC) $(FLAGS) $(DEBUG) $(OMPFLAG) $(MPI_OMP_EXTRA_CFLAGS) $< energy_storms_mpi_omp_core.o $(LIBS) $(MPI_OMP_EXTRA_LIBS) -o $@
 	
 energy_storms_cuda_core.o: energy_storms_cuda_core.cu energy_storms.h
-		$(CUDACC) $(FLAGS) $(DEBUG) $(CUDA_EXTRA_CFLAGS) -c $< $(LIBS) $(CUDA_EXTRA_LIBS) -o $@
+		$(CUDACC) $(DEBUG) $(CUDA_EXTRA_CFLAGS) -c $< $(LIBS) $(CUDA_EXTRA_LIBS) -o $@
 
 energy_storms_cuda: energy_storms_cuda.cpp energy_storms.h energy_storms_cuda_core.o
-		$(CUDACC) $(FLAGS) $(DEBUG) $(CUDA_EXTRA_CFLAGS) $< energy_storms_cuda_core.o $(LIBS) $(CUDA_EXTRA_LIBS) -o $@
+		$(CUDACC) $(DEBUG) $(CUDA_EXTRA_CFLAGS) $< energy_storms_cuda_core.o $(LIBS) $(CUDA_EXTRA_LIBS) -o $@
 
 # Remove the target files
 clean:
@@ -83,4 +83,4 @@ run_mpi:
 		mpirun $(MPIRUN_FLAGS) ./energy_storms_mpi_omp 20000 test_files/test_02_a30k_p20k_w1 test_files/test_02_a30k_p20k_w2 test_files/test_02_a30k_p20k_w3 test_files/test_02_a30k_p20k_w4 test_files/test_02_a30k_p20k_w5 test_files/test_02_a30k_p20k_w6
 
 run_cuda:
-		srun --gpus=1 -N 1 -n 1 ./energy_storms_cuda 20000 test_files/test_02_a30k_p20k_w1 test_files/test_02_a30k_p20k_w2 test_files/test_02_a30k_p20k_w3 test_files/test_02_a30k_p20k_w4 test_files/test_02_a30k_p20k_w5 test_files/test_02_a30k_p20k_w6
+		srun -N 1 -n 1 ./energy_storms_cuda 20000 test_files/test_02_a30k_p20k_w1 test_files/test_02_a30k_p20k_w2 test_files/test_02_a30k_p20k_w3 test_files/test_02_a30k_p20k_w4 test_files/test_02_a30k_p20k_w5 test_files/test_02_a30k_p20k_w6
