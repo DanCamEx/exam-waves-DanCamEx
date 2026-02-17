@@ -21,6 +21,7 @@ __device__ static float atomicMax(float* address, float val) {
 
 /* Kernel che divide le tempeste in blocchi e calcola l'impatto per ogni particella su ogni cella */
 __global__ void add_impact(float *d_layer, float *d_layer_copy, Storm *d_storms, int layer_size, int i) {
+
     __shared__ int s_pos[BLOCK_SIZE];
     __shared__ float s_energy[BLOCK_SIZE];
 
@@ -33,7 +34,7 @@ __global__ void add_impact(float *d_layer, float *d_layer_copy, Storm *d_storms,
         for (int idx = threadIdx.x; idx < particles_per_block; idx += blockDim.x) {
             int global_idx = t + idx;
             int pos = d_storms[i].posval[global_idx * 2];
-            float energy = (float)d_storms[i].posval[global_idx * 2 + 1] * 1000.0f;
+            float energy = (float)d_storms[i].posval[global_idx * 2 + 1] * 1000.0f / layer_size;
             s_pos[idx] = pos;
             s_energy[idx] = energy;
         }
@@ -47,7 +48,7 @@ __global__ void add_impact(float *d_layer, float *d_layer_copy, Storm *d_storms,
                 distance = distance + 1;
 
                 float atenuacion = sqrtf((float)distance);
-                float energy_k = s_energy[j] / (float)layer_size / atenuacion;
+                float energy_k = s_energy[j] / atenuacion;
 
                 if (fabsf(energy_k) >= threshold) {
                     local_energy += energy_k;
