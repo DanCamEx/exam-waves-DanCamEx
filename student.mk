@@ -17,5 +17,7 @@ MPI_OMP_EXTRA_CFLAGS = -O3 -march=native -fno-math-errno -fno-trapping-math -fno
 
 # Flags for CUDA code
 # Uncomment and add extra flags if you need them
-#CUDA_EXTRA_CFLAGS =
+CUDA_EXTRA_CFLAGS = -O3
 #CUDA_EXTRA_LIBS =
+
+OPTIMIZED_FLAGS= -O3 -march=native -fno-math-errno -fno-trapping-math -fno-signaling-nans -funroll-loops

@@ -85,11 +85,11 @@ __global__ void find_max_val(float *d_layer, int layer_size, float *d_maximum, i
 }
 
 /* Kernel per trovare la posizione del massimo valore */
-__global__ void find_max_pos(float *d_layer, int layer_size, int *d_positions, float max_found, int i) {
+__global__ void find_max_pos(float *d_layer, int layer_size, int *d_positions, float *d_maximum, int i) {
     int k = blockIdx.x * blockDim.x + threadIdx.x;
     if ( k > 0 && k < layer_size - 1 ) {
         if ( d_layer[k] > d_layer[k-1] && d_layer[k] > d_layer[k+1] ) {
-            if ( d_layer[k] == max_found ) {
+            if ( d_layer[k] == d_maximum[i] ) {
                 atomicExch(&d_positions[i], k);
             }
         }
@@ -140,15 +140,23 @@ void core(int layer_size, int num_storms, Storm *storms, float *maximum, int *po
         
         find_max_val<<<(layer_size + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>(d_layer, layer_size, d_maximum, i);
         cudaDeviceSynchronize();
-        
-        float max_found;
-        cudaMemcpy(&max_found, &d_maximum[i], sizeof(float), cudaMemcpyDeviceToHost);
 
-        find_max_pos<<<(layer_size + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>(d_layer, layer_size, d_positions, max_found, i);
+        find_max_pos<<<(layer_size + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>(d_layer, layer_size, d_positions, d_maximum, i);
         cudaDeviceSynchronize();
        
     }
 
     cudaMemcpy(maximum, d_maximum, sizeof(float) * num_storms, cudaMemcpyDeviceToHost);
     cudaMemcpy(positions, d_positions, sizeof(int) * num_storms, cudaMemcpyDeviceToHost);
+
+    for (int i = 0; i < num_storms; i++) {
+        cudaFree(temp_storms[i].posval);
+    }
+    free(temp_storms);
+    cudaFree(d_positions);
+    cudaFree(d_maximum);
+    cudaFree(d_storms);
+    cudaFree(d_layer_copy);
+    cudaFree(d_layer);
 }
+
