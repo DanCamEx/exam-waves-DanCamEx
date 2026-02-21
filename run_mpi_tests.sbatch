@@ -21,13 +21,13 @@ export OMP_PROC_BIND=close
 
 RESULTS_LOG="results_mpi_omp_${SLURM_JOB_ID:-manual}_$(date +%Y%m%d_%H%M%S).log"
 
-# Associative array to store sequential times per test file
+# Associative array to store sequential times per test group
 declare -A SEQ_TIMES
 
-TEST_FILES=(
-  "test_files/test_02_a30k_p20k_w1"
-  "test_files/test_07_a1M_p5k_w1"
-  "test_files/test_08_a100M_p1_w1"
+TEST_GROUPS=(
+  "test_files/test_02_a30k_p20k_w1 test_files/test_02_a30k_p20k_w2 test_files/test_02_a30k_p20k_w3 test_files/test_02_a30k_p20k_w4 test_files/test_02_a30k_p20k_w5"
+  "test_files/test_07_a1M_p5k_w1 test_files/test_07_a1M_p5k_w2 test_files/test_07_a1M_p5k_w3 test_files/test_07_a1M_p5k_w4 test_files/test_07_a1M_p5k_w1"
+  "test_files/test_08_a100M_p1_w1 test_files/test_08_a100M_p1_w2 test_files/test_08_a100M_p1_w3 test_files/test_08_a100M_p1_w1 test_files/test_08_a100M_p1_w2"
 )
 
 get_layer_size() {
@@ -39,51 +39,32 @@ get_layer_size() {
   esac
 }
 
-run_sequential() {
-  local test_file="$1"
-  local layer_size
-  layer_size="$(get_layer_size "$test_file")"
-  local sum_time=0
-  local avg_time=0
-
-  echo "[SEQUENTIAL] file=${test_file} size=${layer_size}" | tee -a "$RESULTS_LOG"
-  for i in $(seq 1 10); do
-    echo "[SEQUENTIAL] run=${i}" | tee -a "$RESULTS_LOG"
-    run_output=$(./energy_storms_optimized "$layer_size" "$test_file")
-    echo "$run_output" | tee -a "$RESULTS_LOG"
-    run_time=$(echo "$run_output" | awk '/^Time:/{print $2; exit}')
-    if [[ -n "${run_time}" ]]; then
-      sum_time=$(awk -v s="$sum_time" -v t="$run_time" 'BEGIN {printf "%.10f", s + t}')
-    else
-      echo "[SEQUENTIAL] Warning: Time not found for run=${i}" | tee -a "$RESULTS_LOG"
-    fi
-  done
-
-  avg_time=$(awk -v s="$sum_time" 'BEGIN {printf "%.10f", s / 10.0}')
-  SEQ_TIMES["$test_file"]="$avg_time"
-  
-  echo "[SEQUENTIAL] average_time=${avg_time}" | tee -a "$RESULTS_LOG"
-  echo "" | tee -a "$RESULTS_LOG"
+set_fixed_sequential_times() {
+  SEQ_TIMES["${TEST_GROUPS[0]}"]="4.2788356000"
+  SEQ_TIMES["${TEST_GROUPS[1]}"]="35.6124945000"
+  SEQ_TIMES["${TEST_GROUPS[2]}"]="4.7702027000"
 }
 
 run_mpi_omp() {
-  local test_file="$1"
+  local test_group="$1"
   local num_procs="$2"
   local num_threads="$3"
+  local -a wave_files=()
+  read -r -a wave_files <<< "$test_group"
   local layer_size
-  layer_size="$(get_layer_size "$test_file")"
+  layer_size="$(get_layer_size "$test_group")"
   local sum_time=0
   local avg_time=0
   local seq_time
-  seq_time="${SEQ_TIMES[$test_file]:-3.40}"
+  seq_time="${SEQ_TIMES[$test_group]:-3.40}"
   local total_cores
   total_cores=$((num_procs * num_threads))
 
-  echo "[MPI+OpenMP] file=${test_file} size=${layer_size} procs=${num_procs} threads=${num_threads}" | tee -a "$RESULTS_LOG"
+  echo "[MPI+OpenMP] files=${test_group} size=${layer_size} procs=${num_procs} threads=${num_threads}" | tee -a "$RESULTS_LOG"
   for i in $(seq 1 10); do
     echo "[MPI+OpenMP] run=${i}" | tee -a "$RESULTS_LOG"
     OMP_NUM_THREADS="$num_threads" run_output=$(mpirun -np "$num_procs" --map-by node:PE="$num_threads" --bind-to core \
-      ./energy_storms_mpi_omp "$layer_size" "$test_file")
+      ./energy_storms_mpi_omp "$layer_size" "${wave_files[@]}")
     echo "$run_output" | tee -a "$RESULTS_LOG"
     run_time=$(echo "$run_output" | awk '/^Time:/{print $2; exit}')
     if [[ -n "${run_time}" ]]; then
@@ -107,26 +88,21 @@ run_mpi_omp() {
 echo "Building MPI+OpenMP binary..." | tee -a "$RESULTS_LOG"
 make energy_storms_mpi_omp | tee -a "$RESULTS_LOG"
 
-echo "Building Sequential binary..." | tee -a "$RESULTS_LOG"
-make energy_storms_optimized | tee -a "$RESULTS_LOG"
-
-echo "Starting Sequential baseline tests..." | tee -a "$RESULTS_LOG"
-for test_file in "${TEST_FILES[@]}"; do
-  run_sequential "$test_file"
-done
+set_fixed_sequential_times
+echo "Using fixed sequential baselines: 4.2788356000, 35.6124945000, 4.7702027000" | tee -a "$RESULTS_LOG"
 
 echo "Starting MPI+OpenMP tests..." | tee -a "$RESULTS_LOG"
-for test_file in "${TEST_FILES[@]}"; do
-  echo "=== Testing ${test_file} ===" | tee -a "$RESULTS_LOG"
+for test_group in "${TEST_GROUPS[@]}"; do
+  echo "=== Testing ${test_group} ===" | tee -a "$RESULTS_LOG"
   
   # Test with 2 processes
   for num_threads in 2 4 8 16 32; do
-    run_mpi_omp "$test_file" 2 "$num_threads"
+    run_mpi_omp "$test_group" 2 "$num_threads"
   done
   
   # Test with 4 processes
   for num_threads in 2 4 8 16 32; do
-    run_mpi_omp "$test_file" 4 "$num_threads"
+    run_mpi_omp "$test_group" 4 "$num_threads"
   done
 done
 

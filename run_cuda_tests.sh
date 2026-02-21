@@ -8,13 +8,13 @@ source /home/guest/init-hpc.sh
 
 RESULTS_LOG="results_cuda_${SLURM_JOB_ID:-manual}_$(date +%Y%m%d_%H%M%S).log"
 
-TEST_FILES=(
-  "test_files/test_02_a30k_p20k_w1"
-  "test_files/test_07_a1M_p5k_w1"
-  "test_files/test_08_a100M_p1_w1"
+TEST_GROUPS=(
+  "test_files/test_02_a30k_p20k_w1 test_files/test_02_a30k_p20k_w2 test_files/test_02_a30k_p20k_w3 test_files/test_02_a30k_p20k_w4 test_files/test_02_a30k_p20k_w5"
+  "test_files/test_07_a1M_p5k_w1 test_files/test_07_a1M_p5k_w2 test_files/test_07_a1M_p5k_w3 test_files/test_07_a1M_p5k_w4 test_files/test_07_a1M_p5k_w1"
+  "test_files/test_08_a100M_p1_w1 test_files/test_08_a100M_p1_w2 test_files/test_08_a100M_p1_w3 test_files/test_08_a100M_p1_w1 test_files/test_08_a100M_p1_w2"
 )
 
-# Associative array to store sequential times per test file
+# Associative array to store sequential times per test group
 declare -A SEQ_TIMES
 
 get_layer_size() {
@@ -26,49 +26,30 @@ get_layer_size() {
   esac
 }
 
-run_sequential() {
-  local test_file="$1"
-  local layer_size
-  layer_size="$(get_layer_size "$test_file")"
-  local sum_time=0
-  local avg_time=0
-
-  echo "[SEQUENTIAL] file=${test_file} size=${layer_size}" | tee -a "$RESULTS_LOG"
-  for i in $(seq 1 10); do
-    echo "[SEQUENTIAL] run=${i}" | tee -a "$RESULTS_LOG"
-    run_output=$(./energy_storms_optimized "$layer_size" "$test_file")
-    echo "$run_output" | tee -a "$RESULTS_LOG"
-    run_time=$(echo "$run_output" | awk '/^Time:/{print $2; exit}')
-    if [[ -n "${run_time}" ]]; then
-      sum_time=$(awk -v s="$sum_time" -v t="$run_time" 'BEGIN {printf "%.10f", s + t}')
-    else
-      echo "[SEQUENTIAL] Warning: Time not found for run=${i}" | tee -a "$RESULTS_LOG"
-    fi
-  done
-
-  avg_time=$(awk -v s="$sum_time" 'BEGIN {printf "%.10f", s / 10.0}')
-  SEQ_TIMES["$test_file"]="$avg_time"
-
-  echo "[SEQUENTIAL] average_time=${avg_time}" | tee -a "$RESULTS_LOG"
-  echo "" | tee -a "$RESULTS_LOG"
+set_fixed_sequential_times() {
+  SEQ_TIMES["${TEST_GROUPS[0]}"]="4.2788356000"
+  SEQ_TIMES["${TEST_GROUPS[1]}"]="35.6124945000"
+  SEQ_TIMES["${TEST_GROUPS[2]}"]="4.7702027000"
 }
 
 run_cuda() {
-  local test_file="$1"
+  local test_group="$1"
+  local -a wave_files=()
+  read -r -a wave_files <<< "$test_group"
   local layer_size
-  layer_size="$(get_layer_size "$test_file")"
+  layer_size="$(get_layer_size "$test_group")"
   local sum_time=0
   local avg_time=0
   local seq_time
-  seq_time="${SEQ_TIMES[$test_file]:-3.40}"
+  seq_time="${SEQ_TIMES[$test_group]:-3.40}"
   local speedup efficiency
   local total_cores=1
 
-  echo "[CUDA] file=${test_file} size=${layer_size}" | tee -a "$RESULTS_LOG"
+  echo "[CUDA] files=${test_group} size=${layer_size}" | tee -a "$RESULTS_LOG"
   for i in $(seq 1 10); do
     echo "[CUDA] run=${i}" | tee -a "$RESULTS_LOG"
     run_output=$(srun --qos=students_limit --gpus=1 \
-      ./energy_storms_cuda "$layer_size" "$test_file")
+      ./energy_storms_cuda "$layer_size" "${wave_files[@]}")
     echo "$run_output" | tee -a "$RESULTS_LOG"
     run_time=$(echo "$run_output" | awk '/^Time:/{print $2; exit}')
     if [[ -n "${run_time}" ]]; then
@@ -87,20 +68,15 @@ run_cuda() {
   echo "" | tee -a "$RESULTS_LOG"
 }
 
+set_fixed_sequential_times
+echo "Using fixed sequential baselines: 4.2788356000, 35.6124945000, 4.7702027000" | tee -a "$RESULTS_LOG"
+
 echo "Building CUDA binary..." | tee -a "$RESULTS_LOG"
 make energy_storms_cuda | tee -a "$RESULTS_LOG"
 
-echo "Building Sequential binary..." | tee -a "$RESULTS_LOG"
-make energy_storms_optimized | tee -a "$RESULTS_LOG"
-
-echo "Starting Sequential baseline tests..." | tee -a "$RESULTS_LOG"
-for test_file in "${TEST_FILES[@]}"; do
-  run_sequential "$test_file"
-done
-
 echo "Starting CUDA tests..." | tee -a "$RESULTS_LOG"
-for test_file in "${TEST_FILES[@]}"; do
-  run_cuda "$test_file"
+for test_group in "${TEST_GROUPS[@]}"; do
+  run_cuda "$test_group"
 done
 
 echo "All CUDA tests completed." | tee -a "$RESULTS_LOG"
