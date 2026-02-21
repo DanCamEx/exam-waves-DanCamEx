@@ -24,11 +24,11 @@ CUDACC=nvcc -arch=sm_75
 OMPFLAG=-fopenmp
 
 # Flags for optimization and libs
-FLAGS= -O3
+FLAGS=-O3
 LIBS=-lm
 
 # Targets to build
-OBJS=energy_storms_optimized energy_storms_seq energy_storms_mpi_omp energy_storms_cuda energy_storms_core.o energy_storms_core_optimized.o energy_storms_mpi_omp_core.o energy_storms_cuda_core.o
+OBJS=energy_storms_seq energy_storms_mpi_omp energy_storms_cuda energy_storms_core.o energy_storms_mpi_omp_core.o energy_storms_cuda_core.o
 
 all: $(OBJS)
 
@@ -50,18 +50,12 @@ help:
 energy_storms_core.o: energy_storms_core.c energy_storms.h
 		$(CC) $(DEBUG) -c $< $(LIBS) -o $@
 
-energy_storms_core_optimized.o: energy_storms_core_optimized.c energy_storms.h
-		$(CC) $(OPTIMIZED_FLAGS) $(DEBUG) -c $< $(LIBS) -o $@
-
-energy_storms_seq: energy_storms_seq.c energy_storms.h energy_storms_core.o 
+energy_storms_seq: energy_storms_seq.c energy_storms.h energy_storms_core.o
 		$(CC) $(DEBUG) $< energy_storms_core.o $(LIBS) -o $@
-
-energy_storms_optimized: energy_storms_optimized.c energy_storms.h energy_storms_core_optimized.o 
-		$(CC) $(OPTIMIZED_FLAGS) $(DEBUG) $< energy_storms_core_optimized.o $(LIBS) -o $@
 
 energy_storms_mpi_omp_core.o: energy_storms_mpi_omp_core.c energy_storms.h
 		$(MPICC) $(DEBUG) $(OMPFLAG) $(MPI_OMP_EXTRA_CFLAGS) -c $< $(LIBS) $(MPI_OMP_EXTRA_LIBS) -o $@
-	
+
 energy_storms_mpi_omp: energy_storms_mpi_omp.c energy_storms.h energy_storms_mpi_omp_core.o
 		$(MPICC) $(DEBUG) $(OMPFLAG) $(MPI_OMP_EXTRA_CFLAGS) $< energy_storms_mpi_omp_core.o $(LIBS) $(MPI_OMP_EXTRA_LIBS) -o $@
 	

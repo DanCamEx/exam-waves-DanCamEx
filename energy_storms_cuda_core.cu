@@ -27,7 +27,8 @@ __global__ void add_impact(float *d_layer, float *d_layer_copy, Storm *d_storms,
     __shared__ int s_pos[BLOCK_SIZE];
     __shared__ float s_energy[BLOCK_SIZE];
 
-    int k = blockIdx.x * blockDim.x + threadIdx.x;
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int stride = blockDim.x * gridDim.x;
     float threshold = THRESHOLD / layer_size;
 
     /* Scorriamo le particelle della tempesta i a blocchi di BLOCK_SIZE */
@@ -45,7 +46,7 @@ __global__ void add_impact(float *d_layer, float *d_layer_copy, Storm *d_storms,
         __syncthreads();
 
         /* Aggiorna la propria cella del layer */
-        if (k < layer_size) {
+        for (int k = tid; k < layer_size; k += stride) {
             float local_energy = d_layer[k];
             for (int j = 0; j < particles_per_block; j++) {
                 /* 1. Calcola la distanza */
@@ -69,7 +70,7 @@ __global__ void add_impact(float *d_layer, float *d_layer_copy, Storm *d_storms,
     }
 
     /* Copiamo il layer aggiornato nell'array per la fase di rilassamento */
-    if (k < layer_size) {
+    for (int k = tid; k < layer_size; k += stride) {
         d_layer_copy[k] = d_layer[k];
     }
 }
@@ -77,20 +78,26 @@ __global__ void add_impact(float *d_layer, float *d_layer_copy, Storm *d_storms,
 /* 4.2. Rilassamento dell'energia tra le tempeste
     4.2.3. Aggiorna il layer facendo la media con i vicini adiacenti */
 __global__ void update_layer(float *d_layer, float *d_layer_copy, int layer_size) {
-    int k = blockIdx.x * blockDim.x + threadIdx.x;
-    if ( k > 0 && k < layer_size - 1 ) {
-        d_layer[k] = ( d_layer_copy[k-1] + d_layer_copy[k] + d_layer_copy[k+1] ) / 3;
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int stride = blockDim.x * gridDim.x;
+    for (int k = tid; k < layer_size; k += stride) {
+        if ( k > 0 && k < layer_size - 1 ) {
+            d_layer[k] = ( d_layer_copy[k-1] + d_layer_copy[k] + d_layer_copy[k+1] ) / 3;
+        }
     }
 }
 
 /* 4.3. Trova il valore massimo nel layer
     Controlla solo i massimi locali e aggiorna il massimo globale della tempesta i */
 __global__ void find_max_val(float *d_layer, int layer_size, float *d_maximum, int i) {
-    int k = blockIdx.x * blockDim.x + threadIdx.x;
-    if ( k > 0 && k < layer_size - 1 ) {
-        if ( d_layer[k] > d_layer[k-1] && d_layer[k] > d_layer[k+1] ) {
-            if ( d_layer[k] > d_maximum[i] ) {
-                atomicMax(&d_maximum[i], d_layer[k]);
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int stride = blockDim.x * gridDim.x;
+    for (int k = tid; k < layer_size; k += stride) {
+        if ( k > 0 && k < layer_size - 1 ) {
+            if ( d_layer[k] > d_layer[k-1] && d_layer[k] > d_layer[k+1] ) {
+                if ( d_layer[k] > d_maximum[i] ) {
+                    atomicMax(&d_maximum[i], d_layer[k]);
+                }
             }
         }
     }
@@ -98,17 +105,35 @@ __global__ void find_max_val(float *d_layer, int layer_size, float *d_maximum, i
 
 /* 4.4. Trova la posizione associata al massimo della tempesta i */
 __global__ void find_max_pos(float *d_layer, int layer_size, int *d_positions, float *d_maximum, int i) {
-    int k = blockIdx.x * blockDim.x + threadIdx.x;
-    if ( k > 0 && k < layer_size - 1 ) {
-        if ( d_layer[k] > d_layer[k-1] && d_layer[k] > d_layer[k+1] ) {
-            if ( d_layer[k] == d_maximum[i] ) {
-                atomicExch(&d_positions[i], k);
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int stride = blockDim.x * gridDim.x;
+    for (int k = tid; k < layer_size; k += stride) {
+        if ( k > 0 && k < layer_size - 1 ) {
+            if ( d_layer[k] > d_layer[k-1] && d_layer[k] > d_layer[k+1] ) {
+                if ( d_layer[k] == d_maximum[i] ) {
+                    atomicExch(&d_positions[i], k);
+                }
             }
         }
     }
 }
 
 void core(int layer_size, int num_storms, Storm *storms, float *maximum, int *positions) {
+
+    /* Decidi la dimensioni della griglia ottimizzata per l'RTX 6000 */
+    const int RTX6000_SM_COUNT = 72;
+    const int BLOCKS_PER_SM = 4;
+    const int WAVE_BLOCKS = RTX6000_SM_COUNT * BLOCKS_PER_SM;
+    const int TARGET_GRID_BLOCKS = WAVE_BLOCKS * 2;
+
+    int min_grid_blocks = (layer_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    int target_blocks;
+    if (min_grid_blocks > TARGET_GRID_BLOCKS) {
+        target_blocks = min_grid_blocks;
+    } else {
+        target_blocks = TARGET_GRID_BLOCKS;
+    }
+    int grid_blocks = ((target_blocks + WAVE_BLOCKS - 1) / WAVE_BLOCKS) * WAVE_BLOCKS;
 
     /* Alloca la memoria principale sul device e inizializza i layer a zero */
     float *d_layer;
@@ -150,20 +175,16 @@ void core(int layer_size, int num_storms, Storm *storms, float *maximum, int *po
     for( int i=0; i<num_storms; i++) {
 
         /* 4.1. Aggiungi le energie degli impatti alle celle del layer */
-        add_impact<<<(layer_size + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>(d_layer, d_layer_copy, d_storms, layer_size, i);
-        cudaDeviceSynchronize();
+        add_impact<<<grid_blocks, BLOCK_SIZE>>>(d_layer, d_layer_copy, d_storms, layer_size, i);
         
         /* 4.2. Rilassamento dell'energia tra le tempeste */
-        update_layer<<<(layer_size + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>(d_layer, d_layer_copy, layer_size);
-        cudaDeviceSynchronize();
+        update_layer<<<grid_blocks, BLOCK_SIZE>>>(d_layer, d_layer_copy, layer_size);
         
         /* 4.3. Trova il valore massimo nel layer */
-        find_max_val<<<(layer_size + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>(d_layer, layer_size, d_maximum, i);
-        cudaDeviceSynchronize();
+        find_max_val<<<grid_blocks, BLOCK_SIZE>>>(d_layer, layer_size, d_maximum, i);
 
         /* 4.4. Trova la posizione del massimo */
-        find_max_pos<<<(layer_size + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>(d_layer, layer_size, d_positions, d_maximum, i);
-        cudaDeviceSynchronize();
+        find_max_pos<<<grid_blocks, BLOCK_SIZE>>>(d_layer, layer_size, d_positions, d_maximum, i);
        
     }
 
