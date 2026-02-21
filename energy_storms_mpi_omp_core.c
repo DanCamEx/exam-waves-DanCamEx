@@ -71,15 +71,15 @@ void core(int layer_size, int num_storms, Storm *storms, float *maximum, int *po
 				 /* 1. Calcola la distanza (intero) */
                 int distance = abs(impact_positions[j] - k) + 1;
 
-                /* 3. Calcolo effettivo solo se necessario */
+                /* 2. Calcola l'energia attenuata */
                 float atenuacion = sqrtf((float)distance);
                 float energy_k = energies[j] / atenuacion;
 
-				/* 5. Non aggiungere se il valore assoluto è inferiore alla soglia */
+				/* 3. Non aggiungere se il valore assoluto è inferiore alla soglia */
 				if (fabs(energy_k) >= threshold) 
 					local_energy += energy_k;
 			}
-			/* Solo alla fine scriviamo sull'array l'energia totale accumulata nella cella k */
+			/* Scrivi sull'array l'energia totale accumulata nella cella k */
 			layer[k] = local_energy;
 		}
 		free(energies);
@@ -92,12 +92,12 @@ void core(int layer_size, int num_storms, Storm *storms, float *maximum, int *po
 		for(k=1; k<=local_size; k++) 
 			layer_copy[k] = layer[k];
 
-		/* Scambio verso SINISTRA: Tutti inviano al vicino di sinistra e ricevono dal vicino di destra contemporaneamente */
+		/* Scambia verso SINISTRA: Tutti inviano al vicino di sinistra e ricevono dal vicino di destra contemporaneamente */
 		MPI_Sendrecv(&layer_copy[1], 1, MPI_FLOAT, left_rank, 1,
 					&layer_copy[local_size+1], 1, MPI_FLOAT, right_rank, 1,
 					MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
-		/* Scambio verso DESTRA: Tutti inviano al vicino di destra e ricevono dal vicino di sinistra contemporaneamente */
+		/* Scambia verso DESTRA: Tutti inviano al vicino di destra e ricevono dal vicino di sinistra contemporaneamente */
 		MPI_Sendrecv(&layer_copy[local_size], 1, MPI_FLOAT, right_rank, 2,
 					&layer_copy[0], 1, MPI_FLOAT, left_rank, 2,
 					MPI_COMM_WORLD, MPI_STATUS_IGNORE);

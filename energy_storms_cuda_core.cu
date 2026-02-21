@@ -19,7 +19,9 @@ __device__ static float atomicMax(float* address, float val) {
     return __int_as_float(old);
 }
 
-/* Kernel che divide le tempeste in blocchi e calcola l'impatto per ogni particella su ogni cella */
+/* 4.1. Aggiungi le energie degli impatti alle celle del layer
+    Il kernel carica le particelle in shared memory a blocchi e accumula
+    il contributo energetico su ogni cella */
 __global__ void add_impact(float *d_layer, float *d_layer_copy, Storm *d_storms, int layer_size, int i) {
 
     __shared__ int s_pos[BLOCK_SIZE];
@@ -28,9 +30,11 @@ __global__ void add_impact(float *d_layer, float *d_layer_copy, Storm *d_storms,
     int k = blockIdx.x * blockDim.x + threadIdx.x;
     float threshold = THRESHOLD / layer_size;
 
+    /* Scorriamo le particelle della tempesta i a blocchi di BLOCK_SIZE */
     for (int t = 0; t < d_storms[i].size; t += BLOCK_SIZE) {
         int particles_per_block = min(BLOCK_SIZE, d_storms[i].size - t);
 
+        /* Copiamo in shared memory posizione ed energia delle particelle correnti */
         for (int idx = threadIdx.x; idx < particles_per_block; idx += blockDim.x) {
             int global_idx = t + idx;
             int pos = d_storms[i].posval[global_idx * 2];
@@ -40,31 +44,38 @@ __global__ void add_impact(float *d_layer, float *d_layer_copy, Storm *d_storms,
         }
         __syncthreads();
 
+        /* Aggiorna la propria cella del layer */
         if (k < layer_size) {
             float local_energy = d_layer[k];
             for (int j = 0; j < particles_per_block; j++) {
+                /* 1. Calcola la distanza */
                 int distance = s_pos[j] - k;
                 if (distance < 0) distance = -distance;
                 distance = distance + 1;
 
+                /* 2. Calcola l'energia attenuata */
                 float atenuacion = sqrtf((float)distance);
                 float energy_k = s_energy[j] / atenuacion;
 
+                /* 3. Non aggiungere se il valore assoluto è inferiore alla soglia */
                 if (fabsf(energy_k) >= threshold) {
                     local_energy += energy_k;
                 }
             }
+            /* Scrivi l'energia accumulata della cella k */
             d_layer[k] = local_energy;
         }
         __syncthreads();
     }
 
+    /* Copiamo il layer aggiornato nell'array per la fase di rilassamento */
     if (k < layer_size) {
         d_layer_copy[k] = d_layer[k];
     }
 }
 
-/* Kernel per aggiornare i l'energia delle celle facendone la media con i vicini adiacenti */
+/* 4.2. Rilassamento dell'energia tra le tempeste
+    4.2.3. Aggiorna il layer facendo la media con i vicini adiacenti */
 __global__ void update_layer(float *d_layer, float *d_layer_copy, int layer_size) {
     int k = blockIdx.x * blockDim.x + threadIdx.x;
     if ( k > 0 && k < layer_size - 1 ) {
@@ -72,7 +83,8 @@ __global__ void update_layer(float *d_layer, float *d_layer_copy, int layer_size
     }
 }
 
-/* Kernel per trovare il massimo valore nel layer */
+/* 4.3. Trova il valore massimo nel layer
+    Controlla solo i massimi locali e aggiorna il massimo globale della tempesta i */
 __global__ void find_max_val(float *d_layer, int layer_size, float *d_maximum, int i) {
     int k = blockIdx.x * blockDim.x + threadIdx.x;
     if ( k > 0 && k < layer_size - 1 ) {
@@ -84,7 +96,7 @@ __global__ void find_max_val(float *d_layer, int layer_size, float *d_maximum, i
     }
 }
 
-/* Kernel per trovare la posizione del massimo valore */
+/* 4.4. Trova la posizione associata al massimo della tempesta i */
 __global__ void find_max_pos(float *d_layer, int layer_size, int *d_positions, float *d_maximum, int i) {
     int k = blockIdx.x * blockDim.x + threadIdx.x;
     if ( k > 0 && k < layer_size - 1 ) {
@@ -98,6 +110,7 @@ __global__ void find_max_pos(float *d_layer, int layer_size, int *d_positions, f
 
 void core(int layer_size, int num_storms, Storm *storms, float *maximum, int *positions) {
 
+    /* Alloca la memoria principale sul device e inizializza i layer a zero */
     float *d_layer;
     float *d_layer_copy;
     cudaMalloc(&d_layer, sizeof(float) * layer_size);
@@ -105,11 +118,13 @@ void core(int layer_size, int num_storms, Storm *storms, float *maximum, int *po
     cudaMemset(d_layer, 0, sizeof(float) * layer_size);
     cudaMemset(d_layer_copy, 0, sizeof(float) * layer_size);
     
+    /* Copia la struttura delle tempeste dall'host al device */
     Storm *d_storms;
     cudaMalloc(&d_storms, sizeof(Storm) * num_storms);
     cudaMemcpy(d_storms, storms, sizeof(Storm) * num_storms, cudaMemcpyHostToDevice);
     
     
+    /* Alloca i vettori dei massimi e relative posizioni sul device */
     float *d_maximum;
     cudaMalloc(&d_maximum, sizeof(float) * num_storms);
     cudaMemcpy(d_maximum, maximum, sizeof(float) * num_storms, cudaMemcpyHostToDevice);
@@ -118,7 +133,8 @@ void core(int layer_size, int num_storms, Storm *storms, float *maximum, int *po
     cudaMalloc(&d_positions, sizeof(int) * num_storms);
     cudaMemcpy(d_positions, positions, sizeof(int) * num_storms, cudaMemcpyHostToDevice);
     
-
+    /* Crea una copia delle tempeste per sostituire i puntatori posval
+        con i relativi puntatori in memoria device */
     Storm *temp_storms = (Storm *)malloc(sizeof(Storm) * num_storms);
     memcpy(temp_storms, storms, sizeof(Storm) * num_storms);
     
@@ -130,25 +146,32 @@ void core(int layer_size, int num_storms, Storm *storms, float *maximum, int *po
     }
     cudaMemcpy(d_storms, temp_storms, sizeof(Storm) * num_storms, cudaMemcpyHostToDevice);
 
+    /* 4. Inizio della simulazione delle tempeste */
     for( int i=0; i<num_storms; i++) {
 
+        /* 4.1. Aggiungi le energie degli impatti alle celle del layer */
         add_impact<<<(layer_size + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>(d_layer, d_layer_copy, d_storms, layer_size, i);
         cudaDeviceSynchronize();
         
+        /* 4.2. Rilassamento dell'energia tra le tempeste */
         update_layer<<<(layer_size + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>(d_layer, d_layer_copy, layer_size);
         cudaDeviceSynchronize();
         
+        /* 4.3. Trova il valore massimo nel layer */
         find_max_val<<<(layer_size + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>(d_layer, layer_size, d_maximum, i);
         cudaDeviceSynchronize();
 
+        /* 4.4. Trova la posizione del massimo */
         find_max_pos<<<(layer_size + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>(d_layer, layer_size, d_positions, d_maximum, i);
         cudaDeviceSynchronize();
        
     }
 
+    /* Copia i risultati finali dal device all'host */
     cudaMemcpy(maximum, d_maximum, sizeof(float) * num_storms, cudaMemcpyDeviceToHost);
     cudaMemcpy(positions, d_positions, sizeof(int) * num_storms, cudaMemcpyDeviceToHost);
 
+    /* Libera la memoria */
     for (int i = 0; i < num_storms; i++) {
         cudaFree(temp_storms[i].posval);
     }
