@@ -120,10 +120,14 @@ __global__ void find_max_pos(float *d_layer, int layer_size, int *d_positions, f
 
 void core(int layer_size, int num_storms, Storm *storms, float *maximum, int *positions) {
 
-    /* Decidi la dimensioni della griglia ottimizzata per l'RTX 6000 */
-    const int RTX6000_SM_COUNT = 72;
-    const int BLOCKS_PER_SM = 4;
-    const int WAVE_BLOCKS = RTX6000_SM_COUNT * BLOCKS_PER_SM;
+    /* Decidi la dimensione della griglia in base alla GPU corrente */
+    int device_id = 0;
+    cudaGetDevice(&device_id);
+    cudaDeviceProp device_prop;
+    cudaGetDeviceProperties(&device_prop, device_id);
+    int blocks_per_sm = device_prop.maxThreadsPerMultiProcessor / BLOCK_SIZE;
+
+    const int WAVE_BLOCKS = device_prop.multiProcessorCount * blocks_per_sm;
     const int TARGET_GRID_BLOCKS = WAVE_BLOCKS * 2;
 
     int min_grid_blocks = (layer_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
