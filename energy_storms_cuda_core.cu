@@ -20,7 +20,7 @@ __device__ static float atomicMax(float* address, float val) {
 }
 
 /* 4.1. Aggiungi le energie degli impatti alle celle del layer
-    Il kernel carica le particelle in shared memory a blocchi e accumula
+    Carica le particelle in shared memory a blocchi e accumula
     il contributo energetico su ogni cella */
 __global__ void add_impact(float *d_layer, float *d_layer_copy, Storm *d_storms, int layer_size, int i) {
 
